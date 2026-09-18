@@ -58,6 +58,11 @@ interface JobSnapshot {
 	errorText?: string;
 }
 
+/** Terminal statuses are the ones a consumer may treat as finished work. */
+function isTerminalJobStatus(status: JobSnapshot["status"]): boolean {
+	return status === "completed" || status === "failed" || status === "cancelled";
+}
+
 type CancelStatus = "cancelled" | "not_found" | "already_completed" | "already_cancelled";
 
 interface CancelOutcome {
@@ -398,9 +403,7 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 		// — otherwise a scope:"owned" abort could find an empty causal set and
 		// report stopped_owned while the job remains visibly paused (review
 		// thread P2).
-		const terminalJobs = jobResults.filter(
-			j => j.status === "completed" || j.status === "failed" || j.status === "cancelled",
-		);
+		const terminalJobs = jobResults.filter(j => isTerminalJobStatus(j.status));
 		manager.acknowledgeDeliveries(terminalJobs.map(j => j.id));
 		// A terminal job whose deliveries were just acknowledged is
 		// synchronously consumed: its owned registration is settled and must
@@ -419,8 +422,11 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 			if (registration) unregisterOwnedRegistration(registration);
 		}
 
-		const completed = jobResults.filter(j => j.status !== "running");
-		const running = jobResults.filter(j => j.status === "running");
+		const runningJobs = jobResults.filter(j => j.status === "running");
+		// Paused work (a folded or queued-resume subagent) and any status this build
+		// does not know are non-terminal: reporting them under ## Completed would
+		// tell consumers that resumable work finished.
+		const waitingJobs = jobResults.filter(j => !isTerminalJobStatus(j.status) && j.status !== "running");
 
 		const lines: string[] = [];
 
@@ -430,9 +436,9 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 			lines.push("");
 		}
 
-		if (completed.length > 0) {
-			lines.push(`## Completed (${completed.length})\n`);
-			for (const j of completed) {
+		if (terminalJobs.length > 0) {
+			lines.push(`## Completed (${terminalJobs.length})\n`);
+			for (const j of terminalJobs) {
 				lines.push(`### ${j.id} [${j.type}] — ${j.status}`);
 				lines.push(`Label: ${j.label}`);
 				if (j.resultText) {
@@ -445,10 +451,17 @@ export class JobTool implements AgentTool<typeof jobSchema, JobToolDetails> {
 			}
 		}
 
-		if (running.length > 0) {
-			lines.push(`## Still Running (${running.length})\n`);
-			for (const j of running) {
+		if (runningJobs.length > 0) {
+			lines.push(`## Still Running (${runningJobs.length})\n`);
+			for (const j of runningJobs) {
 				lines.push(`- \`${j.id}\` [${j.type}] — ${j.label}`);
+			}
+		}
+
+		if (waitingJobs.length > 0) {
+			lines.push(`## Waiting (${waitingJobs.length})\n`);
+			for (const j of waitingJobs) {
+				lines.push(`- \`${j.id}\` [${j.type}] — ${j.label} (${j.status})`);
 			}
 		}
 
@@ -575,8 +588,13 @@ export const jobToolRenderer = {
 			failed: 0,
 			cancelled: 0,
 		};
-		// `?? 0` keeps a status from a persisted snapshot out of NaN territory.
-		for (const job of jobs) counts[job.status] = (counts[job.status] ?? 0) + 1;
+		// Snapshots are read back from persisted sessions, so a status this build
+		// does not know must stay out of the typed counts instead of becoming NaN.
+		let unknownStatusCount = 0;
+		for (const job of jobs) {
+			if (job.status in counts) counts[job.status] += 1;
+			else unknownStatusCount += 1;
+		}
 
 		const meta: string[] = [];
 		if (counts.completed > 0) meta.push(uiTheme.fg("success", `${counts.completed} done`));
@@ -584,11 +602,15 @@ export const jobToolRenderer = {
 		if (counts.cancelled > 0) meta.push(uiTheme.fg("warning", `${counts.cancelled} cancelled`));
 		if (counts.paused > 0) meta.push(uiTheme.fg("muted", `${counts.paused} paused`));
 		if (counts.running > 0) meta.push(uiTheme.fg("accent", `${counts.running} running`));
+		if (unknownStatusCount > 0) meta.push(uiTheme.fg("muted", `${unknownStatusCount} unknown`));
 
-		const headerIcon: ToolUIStatus = counts.failed > 0 ? "warning" : counts.running > 0 ? "info" : "success";
+		// Paused and unknown-status rows are unsettled work: reporting success and a
+		// "settled" description for a resumable snapshot would contradict the rows.
+		const pendingCount = counts.running + counts.paused + unknownStatusCount;
+		const headerIcon: ToolUIStatus = counts.failed > 0 ? "warning" : pendingCount > 0 ? "info" : "success";
 		const description =
-			counts.running > 0
-				? `waiting on ${counts.running} of ${jobs.length}`
+			pendingCount > 0
+				? `waiting on ${pendingCount} of ${jobs.length}`
 				: `${jobs.length} ${jobs.length === 1 ? "job" : "jobs"} settled`;
 
 		const header = renderStatusLine(
