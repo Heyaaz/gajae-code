@@ -3060,16 +3060,20 @@ class ManagedAttemptTransaction {
 					// declared is still the accurate cause and is preserved: rewriting
 					// every incomplete call to `malformed` here is what left a typed
 					// reason unreachable at dispatch, where the block's own field is
-					// the last surviving declaration of why the arguments stopped.
+					// the last surviving declaration of why the arguments stopped. If
+					// no reason was declared, leave it unknown rather than claiming that
+					// the terminal arguments failed to decode.
 					const declaredReason = managedProperty(snapshotBlock, "incompleteArgumentsReason");
 					const markedReason = combinedMetadata.incompleteArgumentsReason ?? declaredReason;
 					const marked = {
 						...snapshotBlock,
 						incompleteArguments: true,
-						incompleteArgumentsReason: isIncompleteArgumentsReason(markedReason)
-							? markedReason
-							: ("malformed" as const),
 					};
+					if (isIncompleteArgumentsReason(markedReason)) {
+						marked.incompleteArgumentsReason = markedReason;
+					} else {
+						delete marked.incompleteArgumentsReason;
+					}
 					snapshot.content[index] = marked;
 					acceptedToolCallMetadata.set(marked, combinedMetadata);
 				} else {

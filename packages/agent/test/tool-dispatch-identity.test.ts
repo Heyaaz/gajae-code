@@ -454,12 +454,12 @@ describe("calls rejected before Tool.execute is entered", () => {
 
 		expect(entered()).toBe(false);
 		expectPairingOnly(observed, "call-incomplete");
-		// The retryable error result the model needs is still delivered, and it
-		// never claims an output-token-limit truncation the `toolUse` turn never
-		// earned: a call that carried only the boolean has no declared cause, so
-		// the snapshot-verified decode rejection is what the model is told.
+		// The retryable error result the model needs is still delivered without
+		// inventing either a decode failure or an output-token-limit cause: this
+		// call carried only the incomplete boolean on a `toolUse` turn.
 		const text = errorTexts.join("\n");
-		expect(text).toContain("did not decode to a valid JSON object");
+		expect(text).toContain("incomplete before its arguments finished streaming");
+		expect(text).not.toContain("did not decode to a valid JSON object");
 		expect(text).not.toContain("output token limit");
 		expect(text).not.toContain("cut off");
 		expect(text.toLowerCase()).toContain("re-issue");
