@@ -276,12 +276,12 @@ export function lifecyclePublicFailure(outcome: Extract<SessionLifecycleResult, 
 	// operation, so each survives as one fixed diagnostic. The broker message itself is never
 	// rendered: it may carry request keys, paths, or credentials, and its cause is not decidable
 	// from the code alone.
-	const diagnostic: PublicCommandDiagnosticCode | undefined =
-		outcome.error.code === "idempotency_conflict"
-			? "lifecycle_idempotency_conflict"
-			: LIFECYCLE_INPUT_REFUSAL_CODES.has(outcome.error.code)
-				? "lifecycle_input_refused"
-				: undefined;
+	let diagnostic: PublicCommandDiagnosticCode | undefined;
+	if (outcome.error.code === "idempotency_conflict") {
+		diagnostic = "lifecycle_idempotency_conflict";
+	} else if (LIFECYCLE_INPUT_REFUSAL_CODES.has(outcome.error.code)) {
+		diagnostic = "lifecycle_input_refused";
+	}
 	const diagnostics: readonly PublicCommandDiagnosticCode[] | undefined =
 		diagnostic === undefined ? undefined : [diagnostic];
 	return new PublicCommandFailure({
