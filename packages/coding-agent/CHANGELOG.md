@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- SDK broker startup reclaims a same-host `sessions/index.jsonl.lock` whose owner process is provably dead, including a leftover `.lock.removing` directory from an interrupted release. The session-index lock now records and presents this installation's host identity, so dead-owner recovery runs instead of treating the record as another host and exhausting the startup wait. A live same-host owner and a lock attributed to a different host are still left untouched.
+
 ## [0.18.12] - 2026-10-16
 
 ### Added
