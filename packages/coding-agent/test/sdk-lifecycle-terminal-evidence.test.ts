@@ -1,6 +1,7 @@
 import { expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import fc from "fast-check";
 
 import { Broker } from "../src/sdk/broker/broker";
 import { LifecycleLedger, type LifecycleLedgerEntry } from "../src/sdk/broker/lifecycle-ledger";
@@ -177,6 +178,48 @@ it("withholds proof when the requested identity's own row exceeds the JSON bound
 		await fs.rm(agentDir, { recursive: true, force: true });
 	}
 });
+
+it("scopes read-back to the requested identity for arbitrary decodable rows", async () => {
+	await fc.assert(
+		fc.asyncProperty(
+			fc.constantFrom("foreign" as const, "target" as const),
+			fc.boolean(),
+			fc.jsonValue(),
+			async (rowIdentity, oversized, payload) => {
+				const agentDir = await temp();
+				try {
+					const ledger = await new LifecycleLedger(agentDir).open();
+					await ledger.begin("target", "request-hash");
+					const response = { ok: true, result: { sessionId: "s" } };
+					await ledger.transition("target", "terminal_ok", { response });
+					const rows = await ledgerRows(agentDir);
+					const row = {
+						version: rows[0]!.version,
+						identity: rowIdentity,
+						requestHash: rowIdentity === "target" ? "request-hash" : "foreign-hash",
+						state: "effect_started",
+						ts: Date.now(),
+						response: oversized ? { entries: Array.from({ length: 1066 }, (_, index) => ({ index })) } : payload,
+					};
+					await fs.appendFile(ledgerFile(agentDir), `${JSON.stringify(row)}\n`);
+
+					const read = await new LifecycleLedger(agentDir).readTerminal("target", "request-hash");
+					if (rowIdentity === "foreign") {
+						// An unrelated decodable row cannot withhold the target's proof, even
+						// when its payload exceeds the ledger JSON bounds.
+						expect(read).toMatchObject({ kind: "terminal", entry: { state: "terminal_ok", response } });
+					} else {
+						// The proven terminal row admits no successor: the same identity stays strict.
+						expect(read).toMatchObject({ kind: "rejected" });
+					}
+				} finally {
+					await fs.rm(agentDir, { recursive: true, force: true });
+				}
+			},
+		),
+		{ numRuns: 24 },
+	);
+}, 20_000);
 
 it("returns the real terminal outcome when a slow spawn is stamped by a concurrent recovery", async () => {
 	const agentDir = await temp();
