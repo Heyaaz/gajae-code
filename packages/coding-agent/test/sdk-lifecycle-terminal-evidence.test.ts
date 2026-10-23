@@ -108,6 +108,76 @@ it("withholds proof when a row follows a proven terminal outcome", async () => {
 	}
 });
 
+it("reads its own terminal row when another identity's row exceeds the JSON bounds", async () => {
+	const agentDir = await temp();
+	try {
+		const ledger = await new LifecycleLedger(agentDir).open();
+		await ledger.begin("target", "request-hash");
+		const response = { ok: true, result: { sessionId: "s" } };
+		await ledger.transition("target", "terminal_ok", { response });
+
+		// A cleanup receipt GJC itself writes can carry an artifact snapshot over the
+		// 1024-element JSON bound. It must not make this identity's proof unreadable.
+		const rows = await ledgerRows(agentDir);
+		const foreign = {
+			version: rows[0]!.version,
+			identity: "foreign",
+			requestHash: "foreign-request",
+			state: "effect_started",
+			ts: rows[0]!.ts,
+			operationKey: "session.delete\u0000foreign",
+			response: {
+				ok: false,
+				error: {
+					code: "cleanup_pending",
+					cleanup: {
+						sessionId: "s",
+						artifactTree: {
+							snapshot: { entries: Array.from({ length: 1066 }, (_, index) => ({ index })) },
+						},
+					},
+				},
+			},
+		};
+		await fs.appendFile(ledgerFile(agentDir), `${JSON.stringify(foreign)}\n`);
+
+		expect(await new LifecycleLedger(agentDir).readTerminal("target", "request-hash")).toMatchObject({
+			kind: "terminal",
+			entry: { state: "terminal_ok", response },
+		});
+	} finally {
+		await fs.rm(agentDir, { recursive: true, force: true });
+	}
+});
+
+it("withholds proof when the requested identity's own row exceeds the JSON bounds", async () => {
+	const agentDir = await temp();
+	try {
+		const ledger = await new LifecycleLedger(agentDir).open();
+		await ledger.begin("target", "request-hash");
+		await ledger.transition("target", "terminal_ok", { response: { ok: true } });
+
+		const rows = await ledgerRows(agentDir);
+		await fs.appendFile(
+			ledgerFile(agentDir),
+			`${JSON.stringify({
+				...rows[rows.length - 1],
+				state: "terminal_error",
+				ts: rows[rows.length - 1]!.ts + 1,
+				response: { entries: Array.from({ length: 1066 }, (_, index) => ({ index })) },
+				responseDigest: undefined,
+			})}\n`,
+		);
+
+		expect(await new LifecycleLedger(agentDir).readTerminal("target", "request-hash")).toEqual({
+			kind: "rejected",
+			reason: "shape",
+		});
+	} finally {
+		await fs.rm(agentDir, { recursive: true, force: true });
+	}
+});
+
 it("returns the real terminal outcome when a slow spawn is stamped by a concurrent recovery", async () => {
 	const agentDir = await temp();
 	const previousCommand = process.env.GJC_SDK_SESSION_COMMAND;
