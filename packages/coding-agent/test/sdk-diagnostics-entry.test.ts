@@ -3,6 +3,7 @@ import { constants as fsConstants, statSync as fsStatSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { prepareManagedDirectoryRoot } from "../src/session/internal/managed-session-storage";
 
 /**
  * Public-entry inertness contract for `gjc sdk diagnostics` (DESIGN §B1).
@@ -816,6 +817,10 @@ describe("sdk diagnostics public entry (B1)", () => {
 		// owner state root -- a write that a read-only observation must never attempt.
 		const ownerStateDir = path.join(workspace, `owner-state-${Math.random().toString(36).slice(2)}`);
 		await fs.mkdir(ownerStateDir, { recursive: true, mode: 0o700 });
+		// Create and prepare the lifecycle root with proper owner-only security.
+		const lifecycleRoot = path.join(ownerStateDir, "g1-session", "owner-lifecycle");
+		await fs.mkdir(lifecycleRoot, { recursive: true, mode: 0o700 });
+		prepareManagedDirectoryRoot(lifecycleRoot);
 		const ownerEnv = {
 			GJC_TMUX_OWNER_STATE_DIR: ownerStateDir,
 			GJC_COORDINATOR_SESSION_ID: "g1-session",
@@ -831,12 +836,14 @@ describe("sdk diagnostics public entry (B1)", () => {
 		const baseline = await runEntry(["sdk", "diagnostics", "--help"], { mode: "ordinary", env: ownerEnv });
 		expect(baseline.exitCode).toBe(75);
 		expect(baseline.stderr).toContain("child admission blocked: exact_child_binding_unavailable");
+		expect(baseline.trap.nativeActivations).toBeGreaterThan(0);
 		// Handoffs now use retained native authority, not JS pathname writers.
 		// Observe the durable result on Linux; other platforms explicitly fail closed.
-		const handoffs = await fs.readdir(ownerStateDir);
+		const handoffs = await fs.readdir(lifecycleRoot);
 		if (process.platform === "linux") {
 			expect(handoffs).toHaveLength(1);
-			const handoff = await Bun.file(path.join(ownerStateDir, handoffs[0]!)).json();
+			expect(handoffs[0]).toMatch(/^admission-handoff-.*\.json$/);
+			const handoff = await Bun.file(path.join(lifecycleRoot, handoffs[0]!)).json();
 			expect(handoff).toMatchObject({
 				state: "fail_closed_handoff",
 				reason: "exact_child_binding_unavailable",
@@ -846,6 +853,12 @@ describe("sdk diagnostics public entry (B1)", () => {
 			expect(handoffs).toEqual([]);
 			expect(baseline.stderr).toContain("managed_owner_admission_blocked: handoff_not_persisted");
 		}
+		// Remove the baseline receipt before checking that diagnostics creates none.
+		for (const file of handoffs) {
+			await fs.unlink(path.join(lifecycleRoot, file));
+		}
+		await fs.rm(lifecycleRoot, { recursive: true, force: true });
+		await fs.rm(path.join(ownerStateDir, "g1-session"), { recursive: true, force: true });
 
 		// Fixed path: the actual bin entry and the exported runCli render help with no
 		// mutation anywhere, and the owner state root stays unchanged.
@@ -858,7 +871,7 @@ describe("sdk diagnostics public entry (B1)", () => {
 			expect(run.stdout).toContain("gjc sdk diagnostics");
 			expectInert(run);
 		}
-		expect(await fs.readdir(ownerStateDir)).toEqual(handoffs);
+		expect(await fs.readdir(ownerStateDir)).toEqual([]);
 	});
 
 	it("does not re-exec for malloc-stack-logging env on diagnostics argv", async () => {
