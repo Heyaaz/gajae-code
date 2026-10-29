@@ -519,11 +519,13 @@ export async function assertAcpRow(operation: Operation, secret: boolean): Promi
 				);
 			}
 		} else if (operation.kind === "query") {
-			if (expected !== "forwarded")
-				throw new Error(`Query ${operation.sdkId} has no permitted machine-adapter semantic fixture.`);
-			const code = expectedDomainErrors[operation.sdkId];
-			if (code) await expectSdkRejection(adapter.query(operation.sdkId, input), code);
-			else expectSemanticResult(operation, await adapter.query(operation.sdkId, input));
+			if (expected !== "forwarded") {
+				await expectSdkRejection(adapter.query(operation.sdkId, input), expectedAcpRejection(operation, secret));
+			} else {
+				const code = expectedDomainErrors[operation.sdkId];
+				if (code) await expectSdkRejection(adapter.query(operation.sdkId, input), code);
+				else expectSemanticResult(operation, await adapter.query(operation.sdkId, input));
+			}
 		} else expect(expected).toBe("internal_only");
 		expectObservation(host, before, operation, expected);
 	} finally {

@@ -133,6 +133,21 @@ describe("SDK surface parity", () => {
 		expect(policy.installedQueries.has("skill.list/state")).toBe(false);
 	});
 
+	test("external permissions require both a provider binding and a session-owned queue", () => {
+		for (const binding of [false, true]) {
+			for (const queue of [false, true]) {
+				const policy = createSdkSurfacePolicy({
+					bindings: binding ? ["setSdkPermissionProvider"] : [],
+					workflowGateAvailable: false,
+					externalPermissionsAvailable: queue,
+				});
+				expect(policy.installedControls.has("permission.channel.set")).toBe(binding && queue);
+				expect(policy.installedControls.has("permission.respond")).toBe(binding && queue);
+				expect(policy.installedQueries.has("permission.requests.list")).toBe(binding && queue);
+			}
+		}
+	});
+
 	test("private image operations are advertised only when the host installs staging", () => {
 		for (const available of [false, true]) {
 			const policy = createSdkSurfacePolicy({
