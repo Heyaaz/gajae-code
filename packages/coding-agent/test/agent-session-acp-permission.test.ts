@@ -238,7 +238,7 @@ it("retained tool wrappers use the current SDK permission provider", async () =>
 	expect(bashTool.executeCalls).toBe(0);
 });
 
-for (const change of ["mode", "provider", "bridge"] as const) {
+for (const change of ["mode", "provider", "bridge", "resolved-then-deny"] as const) {
 	it(`SDK pending approvals cancel on ${change} changes and cannot execute late`, async () => {
 		const bashTool = makeFakeTool("bash");
 		session = await createSession([bashTool]);
@@ -252,7 +252,10 @@ for (const change of ["mode", "provider", "bridge"] as const) {
 			.catch(error => error as Error);
 		for (let attempt = 0; channel.list().requests.length === 0 && attempt < 100; attempt++) await Bun.sleep(1);
 		const request = channel.list().requests[0]!;
-		if (change === "mode") session.setSdkPermissionMode("deny");
+		if (change === "resolved-then-deny") {
+			channel.respond({ sessionId: "session", id: request.id, optionId: "allow_always" });
+			session.setSdkPermissionMode("deny");
+		} else if (change === "mode") session.setSdkPermissionMode("deny");
 		else if (change === "provider") session.setSdkPermissionProvider(undefined);
 		else session.setClientBridge(undefined);
 		expect(channel.list().requests).toEqual([]);

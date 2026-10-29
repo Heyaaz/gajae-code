@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, describe, expect, it, setSystemTime, vi } from "bun:test";
 import { type ExternalPermissionError, ExternalPermissionRuntime } from "../src/sdk/host/external-permissions";
 import type { ClientBridgePermissionOption, ClientBridgePermissionToolCall } from "../src/session/client-bridge";
 
@@ -31,6 +31,7 @@ function expectErrorCode(fn: () => unknown, code: ExternalPermissionError["code"
 
 afterEach(() => {
 	vi.useRealTimers();
+	setSystemTime();
 });
 
 describe("ExternalPermissionRuntime", () => {
@@ -190,6 +191,21 @@ describe("ExternalPermissionRuntime", () => {
 		const after = new AbortController();
 		const pending = channel.request(toolCall(), options, after.signal);
 		after.abort();
+		expect(await pending).toEqual({ outcome: "cancelled" });
+		expect(channel.list().requests).toEqual([]);
+		channel.dispose();
+	});
+
+	it("rejects an expired response even before the timeout callback runs", async () => {
+		vi.useFakeTimers();
+		const channel = runtime({ timeoutMs: 50 });
+		const pending = channel.request(toolCall(), options);
+		const [request] = channel.list().requests;
+		setSystemTime(Date.now() + 50);
+		expectErrorCode(
+			() => channel.respond({ sessionId: "session-1", id: request.id, optionId: "allow" }),
+			"resource_gone",
+		);
 		expect(await pending).toEqual({ outcome: "cancelled" });
 		expect(channel.list().requests).toEqual([]);
 		channel.dispose();

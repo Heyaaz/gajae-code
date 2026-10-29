@@ -114,6 +114,9 @@ export const expectedDomainErrors: Readonly<Record<string, string>> = {
 	"turn.image.append": "invalid_input",
 	"turn.image.finish": "invalid_input",
 	"turn.image.discard": "invalid_input",
+	"permission.channel.set": "invalid_input",
+	"permission.respond": "invalid_input",
+
 	"ask.answer": "resource_gone",
 	"workflow.gate_answer": "resource_gone",
 	"workflow.plan_approve": "resource_gone",
