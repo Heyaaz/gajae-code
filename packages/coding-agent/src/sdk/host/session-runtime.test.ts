@@ -4987,12 +4987,20 @@ test("external permissions cross transient SDK connections and cancel at lifecyc
 		  ) => Promise<ClientBridgePermissionOutcome>)
 		| undefined;
 	const modes: unknown[] = [];
+	let currentMode = "allow";
 	const harness = await invocationHarness("permission-session", cwd, {
 		setSdkPermissionProvider: value => {
 			provider = value;
 		},
 		sdkControl: async (operation, input) => {
-			if (operation === "permission_mode.set") modes.push(input.mode);
+			if (operation === "permission_mode.set") {
+				if (!["prompt", "allow", "deny"].includes(String(input.mode)))
+					throw Object.assign(new Error("Invalid permission mode"), { code: "invalid_input" });
+				modes.push(input.mode);
+				const changed = currentMode !== input.mode;
+				currentMode = String(input.mode);
+				return { changed, mode: currentMode };
+			}
 			return { changed: true };
 		},
 	});
@@ -5014,6 +5022,11 @@ test("external permissions cross transient SDK connections and cancel at lifecyc
 		expect(modes).toEqual(["prompt"]);
 		const first = provider!(toolCall, options);
 		const id = await pendingId();
+		expect((await harness.control("permission_mode.set", { mode: "invalid" })).error?.code).toBe("invalid_input");
+		expect((await harness.control("permission_mode.set", { mode: "prompt" })).result).toMatchObject({
+			changed: false,
+		});
+		expect(await pendingId()).toBe(id);
 		const conflict = await harness.requestOnSession("permission-session", {
 			type: "register_provider",
 			connectionId: "client",
@@ -5057,7 +5070,7 @@ test("external permissions cross transient SDK connections and cancel at lifecyc
 		await harness.control("permission.channel.set", { enabled: false });
 		expect(await disablePending).toEqual({ outcome: "cancelled" });
 		expect(provider).toBeUndefined();
-		expect(modes).toEqual(["prompt", "deny"]);
+		expect(modes).toEqual(["prompt", "prompt", "deny"]);
 		const reverse = await harness.requestOnSession("permission-session", {
 			type: "register_provider",
 			connectionId: "client",

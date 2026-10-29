@@ -8600,9 +8600,11 @@ export function createNotificationsExtension(
 			},
 		});
 		const setPermissionMode = controlSurface.setPermissionMode;
-		controlSurface.setPermissionMode = mode => {
-			externalPermissions.cancelPending();
-			return setPermissionMode(mode);
+		controlSurface.setPermissionMode = async mode => {
+			const result = await setPermissionMode(mode);
+			if (result && typeof result === "object" && "changed" in result && result.changed === true)
+				externalPermissions.cancelPending();
+			return result;
 		};
 		controlSurface.configurePermissionChannel = async input => {
 			if (input.enabled === true && sdkRuntime?.host.reverse.getLease("permission"))

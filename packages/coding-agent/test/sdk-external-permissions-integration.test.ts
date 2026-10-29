@@ -86,6 +86,7 @@ test("public session CLI enables, queries and answers native-host tool approvals
 			undefined as never,
 			undefined as never,
 		);
+		void approved.catch(() => {});
 		let approvalId: string | undefined;
 		for (let attempt = 0; attempt < 20 && !approvalId; attempt++) {
 			const snapshot = (await raw("query", "permission.requests.list")) as {
@@ -94,6 +95,14 @@ test("public session CLI enables, queries and answers native-host tool approvals
 			approvalId = snapshot.result.requests[0]?.id;
 		}
 		expect(approvalId).toBeDefined();
+		await expect(raw("control", "permission_mode.set", { mode: "invalid" })).rejects.toThrow("Public command failed");
+		expect(await raw("control", "permission_mode.set", { mode: "prompt" })).toMatchObject({
+			ok: true,
+			result: { changed: false, mode: "prompt" },
+		});
+		expect(await raw("query", "permission.requests.list")).toMatchObject({
+			result: { requests: [{ id: approvalId }] },
+		});
 		expect(
 			await raw("control", "permission.respond", {
 				sessionId: host.sessionId,
@@ -102,6 +111,37 @@ test("public session CLI enables, queries and answers native-host tool approvals
 			}),
 		).toMatchObject({ ok: true, result: { accepted: true } });
 		expect(JSON.stringify(await approved)).toContain("sdk-approved");
+		const cancelled = tool
+			.execute(
+				"mode-change-call",
+				{ command: "printf should-not-run" },
+				undefined,
+				undefined as never,
+				undefined as never,
+			)
+			.catch(error => error as Error);
+		let cancelledId: string | undefined;
+		for (let attempt = 0; attempt < 20 && !cancelledId; attempt++) {
+			const snapshot = (await raw("query", "permission.requests.list")) as {
+				result: { requests: ExternalPermissionRequest[] };
+			};
+			cancelledId = snapshot.result.requests[0]?.id;
+		}
+		expect(cancelledId).toBeDefined();
+		expect(await raw("control", "permission_mode.set", { mode: "always-deny" })).toMatchObject({
+			ok: true,
+			result: { changed: true, mode: "deny" },
+		});
+		expect(((await cancelled) as Error).message).toBe("Permission request cancelled");
+		expect(await raw("query", "permission.requests.list")).toMatchObject({ result: { requests: [] } });
+		await expect(
+			raw("control", "permission.respond", {
+				sessionId: host.sessionId,
+				id: cancelledId,
+				optionId: "allow_once",
+			}),
+		).rejects.toThrow("Public command failed");
+		await raw("control", "permission_mode.set", { mode: "prompt" });
 		expect(await raw("control", "permission.channel.set", { enabled: false })).toMatchObject({
 			ok: true,
 			result: { enabled: false },

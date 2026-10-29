@@ -12177,6 +12177,7 @@ export class AgentSession {
 
 	/** Set the SDK permission policy used by guarded ACP tool execution. */
 	setSdkPermissionMode(mode: "prompt" | "allow" | "deny"): void {
+		if (mode === this.#sdkPermissionMode) return;
 		this.#permissionEpoch.abort();
 		this.#permissionEpoch = new AbortController();
 		this.#sdkPermissionMode = mode;

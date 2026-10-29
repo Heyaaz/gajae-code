@@ -7819,9 +7819,11 @@ export function createSdkSessionRuntimeExtension(api: ExtensionAPI, options: Cre
 		};
 		controlSurface.respondPermission = input => externalPermissions.respond(input);
 		const setPermissionMode = controlSurface.setPermissionMode;
-		controlSurface.setPermissionMode = mode => {
-			externalPermissions.cancelPending();
-			return setPermissionMode(mode);
+		controlSurface.setPermissionMode = async mode => {
+			const result = await setPermissionMode(mode);
+			if (result && typeof result === "object" && "changed" in result && result.changed === true)
+				externalPermissions.cancelPending();
+			return result;
 		};
 		runtime = new SessionSdkSessionRuntime({
 			transport,

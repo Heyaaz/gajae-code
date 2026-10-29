@@ -238,6 +238,43 @@ it("retained tool wrappers use the current SDK permission provider", async () =>
 	expect(bashTool.executeCalls).toBe(0);
 });
 
+for (const providerKind of ["SDK", "ACP"] as const) {
+	it(`${providerKind} approvals remain actionable after reasserting prompt mode`, async () => {
+		const bashTool = makeFakeTool("bash");
+		session = await createSession([bashTool]);
+		const channel = new ExternalPermissionRuntime("session");
+		channel.configure({ enabled: true });
+		const provider = (
+			call: ClientBridgePermissionToolCall,
+			options: Parameters<ExternalPermissionRuntime["request"]>[1],
+			signal?: AbortSignal,
+		) => channel.request(call, options, signal);
+		if (providerKind === "SDK") session.setSdkPermissionProvider(provider);
+		else session.setClientBridge({ capabilities: { requestPermission: true }, requestPermission: provider });
+		try {
+			await session.setActiveToolsByName(["bash"]);
+			const tool = session.agent.state.tools.find(t => t.name === "bash")!;
+			const execution = tool.execute(
+				"call",
+				{ command: "echo hi" },
+				undefined,
+				undefined as never,
+				undefined as never,
+			);
+			for (let attempt = 0; channel.list().requests.length === 0 && attempt < 100; attempt++) await Bun.sleep(1);
+			const request = channel.list().requests[0]!;
+			expect(request).toBeDefined();
+			session.setSdkPermissionMode("prompt");
+			expect(channel.list().requests.map(pending => pending.id)).toEqual([request.id]);
+			channel.respond({ sessionId: "session", id: request.id, optionId: "allow_once" });
+			await execution;
+			expect(bashTool.executeCalls).toBe(1);
+		} finally {
+			channel.dispose();
+		}
+	});
+}
+
 for (const change of ["mode", "provider", "bridge", "resolved-then-deny"] as const) {
 	it(`SDK pending approvals cancel on ${change} changes and cannot execute late`, async () => {
 		const bashTool = makeFakeTool("bash");
