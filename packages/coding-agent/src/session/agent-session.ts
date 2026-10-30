@@ -12275,6 +12275,19 @@ export class AgentSession {
 		return this.#sdkPermissionMode;
 	}
 
+	/** Permission-only provider for descendants, fenced by the parent's current policy epoch. */
+	getSdkPermissionProvider(): ClientBridge["requestPermission"] {
+		const provider = this.#sdkPermissionProvider;
+		if (!provider) return undefined;
+		const epoch = this.#permissionEpoch.signal;
+		return async (toolCall, options, signal) => {
+			const combinedSignal = signal ? AbortSignal.any([epoch, signal]) : epoch;
+			if (combinedSignal.aborted) return { outcome: "cancelled" };
+			const outcome = await provider(toolCall, options, combinedSignal);
+			return combinedSignal.aborted ? { outcome: "cancelled" } : outcome;
+		};
+	}
+
 	/** Register or clear the SDK reverse permission provider for this session. */
 	setSdkPermissionProvider(
 		provider:
